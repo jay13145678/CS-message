@@ -316,7 +316,7 @@ function generateEmailHTML(data) {
       const dateLabel = date === yesterdayStr ? `${date} (昨日)` : `${date} (${getDayOfWeek(date)})`;
       finishedHtml += `
         <tr style="background:#f0f0f0;">
-          <td colspan="6" style="padding:8px 12px;font-weight:bold;color:#FF6B35;">${dateLabel}</td>
+          <td colspan="5" style="padding:8px 12px;font-weight:bold;color:#FF6B35;">${dateLabel}</td>
         </tr>
       `;
       matches.forEach(m => {
@@ -330,13 +330,12 @@ function generateEmailHTML(data) {
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;">${m.homeScore} - ${m.awayScore}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;${loserStyle}">${loser}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">${m.format}</td>
-        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;color:#888;">${m.time || '-'}</td>
       </tr>
     `;
       });
     });
   } else {
-    finishedHtml = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">暂无已完成比赛</td></tr>';
+    finishedHtml = '<tr><td colspan="5" style="padding:16px;text-align:center;color:#888;">暂无已完成比赛</td></tr>';
   }
 
   // 生成赛程的 HTML
@@ -347,7 +346,7 @@ function generateEmailHTML(data) {
       const dateLabel = date === todayStr ? `${date} (今日)` : `${date} (${getDayOfWeek(date)})`;
       upcomingHtml += `
         <tr style="background:#f0f0f0;">
-          <td colspan="6" style="padding:8px 12px;font-weight:bold;color:#007bff;">${dateLabel}</td>
+          <td colspan="5" style="padding:8px 12px;font-weight:bold;color:#007bff;">${dateLabel}</td>
         </tr>
       `;
       matches.forEach(m => {
@@ -358,13 +357,12 @@ function generateEmailHTML(data) {
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;color:#007bff;">vs</td>
         <td style="padding:8px;border-bottom:1px solid #eee;">${m.awayTeam}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">${m.format}</td>
-        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;"><span style="background:#007bff;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">${m.time || '即将开始'}</span></td>
       </tr>
     `;
       });
     });
   } else {
-    upcomingHtml = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">暂无赛程</td></tr>';
+    upcomingHtml = '<tr><td colspan="5" style="padding:16px;text-align:center;color:#888;">暂无赛程</td></tr>';
   }
 
   const totalFinished = sortedFinishedDates.reduce((sum, d) => sum + finishedByDate[d].length, 0);
@@ -396,12 +394,11 @@ a { color: #FF6B35; text-decoration: none; }
 <h2>✅ 已完成比赛</h2>
 <table>
   <tr>
-    <th style="width:25%;">赛事</th>
-    <th style="width:15%;">胜者</th>
-    <th style="width:10%;text-align:center;">比分</th>
-    <th style="width:15%;">败者</th>
-    <th style="width:8%;text-align:center;">赛制</th>
-    <th style="width:10%;text-align:center;">时间</th>
+    <th style="width:30%;">赛事</th>
+    <th style="width:20%;">胜者</th>
+    <th style="width:15%;text-align:center;">比分</th>
+    <th style="width:20%;">败者</th>
+    <th style="width:15%;text-align:center;">赛制</th>
   </tr>
   ${finishedHtml}
 </table>
@@ -409,12 +406,11 @@ a { color: #FF6B35; text-decoration: none; }
 <h2>📅 赛程</h2>
 <table>
   <tr>
-    <th style="width:25%;">赛事</th>
-    <th style="width:15%;">队伍A</th>
-    <th style="width:5%;text-align:center;"></th>
-    <th style="width:15%;">队伍B</th>
-    <th style="width:8%;text-align:center;">赛制</th>
-    <th style="width:12%;text-align:center;">开赛时间</th>
+    <th style="width:30%;">赛事</th>
+    <th style="width:20%;">队伍A</th>
+    <th style="width:10%;text-align:center;"></th>
+    <th style="width:20%;">队伍B</th>
+    <th style="width:20%;text-align:center;">赛制</th>
   </tr>
   ${upcomingHtml}
 </table>
