@@ -10,6 +10,17 @@ const fs = require('fs');
 const URL_RESULTS = 'https://event.5eplay.com/csgo/matches?tab=result';
 const URL_UPCOMING = 'https://event.5eplay.com/csgo/matches?tab=schedule';
 
+// 一线赛事列表
+const TIER1_TOURNAMENTS = [
+  'IEM', 'BLAST', 'Major', 'ESL Pro League', 'ESL Major',
+  'PGL', 'DreamHack', 'VCT', 'CCT', 'FACEIT'
+];
+
+function isTier1Tournament(name) {
+  if (!name) return false;
+  return TIER1_TOURNAMENTS.some(t => name.includes(t));
+}
+
 // 热门战队列表
 const HOT_TEAMS = [
   'FaZe', 'Natus Vincere', 'NaVi', 'Vitality', 'G2', 'Heroic',
@@ -184,6 +195,9 @@ function parse5eplayLines(text) {
 
     // 过滤：至少有一支热门战队
     if (!isHotTeam(team1) && !isHotTeam(team2)) continue;
+
+    // 过滤：一线赛事
+    if (!isTier1Tournament(tournament)) continue;
 
     // 过滤：排除明显错误的
     if (team1.length < 2 || team2.length < 2) continue;
