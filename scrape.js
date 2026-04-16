@@ -1,24 +1,20 @@
 /**
- * CS2 比赛数据爬虫 - 5eplay版
- * 数据源：https://event.5eplay.com/csgo/matches
+ * CS2 比赛数据爬虫 - 5eplay赛事版
+ * 策略：获取赛事列表 → 进入每个一线赛事 → 获取完整赛程
  */
 
 const { chromium } = require('playwright');
 const fs = require('fs');
 
-// 5eplay 页面URL
-const URL_RESULTS = 'https://event.5eplay.com/csgo/matches?tab=result';
-const URL_UPCOMING = 'https://event.5eplay.com/csgo/matches?tab=schedule';
-
-// 一线赛事列表
-const TIER1_TOURNAMENTS = [
+// 一线赛事关键词
+const TIER1_KEYWORDS = [
   'IEM', 'BLAST', 'Major', 'ESL Pro League', 'ESL Major',
   'PGL', 'DreamHack', 'VCT', 'CCT', 'FACEIT'
 ];
 
 function isTier1Tournament(name) {
   if (!name) return false;
-  return TIER1_TOURNAMENTS.some(t => name.includes(t));
+  return TIER1_KEYWORDS.some(k => name.includes(k));
 }
 
 // 热门战队列表
@@ -32,7 +28,8 @@ const HOT_TEAMS = [
   'B8', '1win', 'Sashi', 'Alliance', 'Execration',
   'Nuclear', 'Fire Flux', 'Metizport', 'ARCRED', 'Young Ninjas',
   'Lavked', 'Bebop', 'ESC', 'Ursa', 'regain', 'EMPIRE',
-  'Falcons', 'KOLESIE', 'TDK', 'MANA', 'PARIVISION', 'The MongolZ'
+  'Falcons', 'KOLESIE', 'TDK', 'MANA', 'PARIVISION', 'The MongolZ',
+  'Legacy', 'Passion UA', 'Gentle Mates', 'HOTU', 'RED Canids', '3DMAX'
 ];
 
 function isHotTeam(name) {
@@ -41,69 +38,219 @@ function isHotTeam(name) {
   return HOT_TEAMS.some(t => upper.includes(t.toUpperCase()) || t.toUpperCase().includes(upper));
 }
 
-// 检测是否是队伍名（不是时间、赛制、百分比等）
-function isTeamName(candidate) {
-  if (!candidate || candidate.length < 2 || candidate.length > 25) return false;
-  // 排除已知格式
-  if (/^\d{2}:\d{2}$/.test(candidate)) return false; // 时间
-  if (/^\d{4}-\d{2}/.test(candidate)) return false; // 日期
-  // 排除所有赛制格式（BO1/BO2/BO3/BO5等）
-  if (/^BO\d$/i.test(candidate)) return false; // BO1/BO2/BO3等
-  if (/^BO[三五1-9]$/i.test(candidate)) return false; // BO三/BO五等
-  if (/^\d+%$/.test(candidate)) return false; // 百分比
-  if (/^\d+-\d+$/.test(candidate)) return false; // 比分 (如 13-5)
-  if (/^--$/.test(candidate)) return false; // 占位符
-  if (/^(进行中|赛前分析|已结束)$/.test(candidate)) return false; // 状态
-  // 排除全数字（比分、地图数等）
-  if (/^\d+$/.test(candidate)) return false;
-  // 排除包含中文的（通常是赛事名）
-  if (/[\u4e00-\u9fa5]/.test(candidate)) return false;
-  // 队名通常以字母开头且至少3个字符
-  if (!/^[a-zA-Z]/.test(candidate)) return false;
-  if (candidate.length < 3) return false;
-  // 排除常见非队名
-  if (/^(CS|ESC|ESCAPE|TBD|NEXT)$/i.test(candidate)) return false;
-  return true;
+// ==================== 从赛事列表提取赛事 ====================
+async function getEventList(context) {
+  console.log('[5eplay] 获取赛事列表...');
+
+  const page = await context.newPage();
+  await page.goto('https://event.5eplay.com/csgo/events', { waitUntil: 'networkidle', timeout: 30000 });
+  await page.waitForTimeout(5000);
+
+  const text = await page.evaluate(() => document.body.innerText);
+
+  // 已知的一线赛事
+  const knownTier1 = [
+    'IEM 里约 2026',
+    'CCT 全球总决赛 2026',
+    'CCT 2026 南美挑战者 系列赛1',
+    'CCT 2026 挑战者 欧洲 第1季',
+    'NODWIN Clutch 系列 7',
+    'ESL 挑战者联赛 S51'
+  ];
+
+  const events = [];
+  for (const name of knownTier1) {
+    if (text.includes(name)) {
+      events.push({ name, url: '' });
+    }
+  }
+
+  await page.close();
+  console.log(`[5eplay] 找到 ${events.length} 个一线赛事`);
+
+  return events;
 }
 
-// ==================== 5eplay 爬虫 ====================
+// ==================== 从赛事页面获取赛程 ====================
+async function getMatchesFromEvent(context, eventUrl, eventName) {
+  if (!eventUrl) {
+    console.log(`[5eplay] ${eventName}: 未找到URL`);
+    return [];
+  }
+
+  const matchesUrl = `${eventUrl}?channel=matches`;
+  console.log(`[5eplay] 抓取 ${eventName}...`);
+
+  try {
+    const page = await context.newPage();
+    await page.goto(matchesUrl, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.waitForTimeout(5000);
+
+    const text = await page.evaluate(() => document.body.innerText);
+    const parsedMatches = parseEventMatches(text, eventName);
+    await page.close();
+
+    return parsedMatches;
+  } catch (e) {
+    console.log(`[5eplay] 抓取失败 ${eventName}: ${e.message}`);
+    return [];
+  }
+}
+
+// ==================== 解析赛事赛程页面 ====================
+function parseEventMatches(text, defaultTournament) {
+  const matches = [];
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+
+  let currentDate = '';
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // 检测日期行 (格式: 2026-04-15 或 2026-04-16(今天))
+    const dateMatch = line.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (dateMatch) {
+      currentDate = dateMatch[1];
+      i++;
+      continue;
+    }
+
+    // 检测时间行 (格式: 21:00)
+    const timeMatch = line.match(/^(\d{2}:\d{2})$/);
+    if (timeMatch) {
+      const time = timeMatch[1];
+      i++;
+
+      // 跳过赛制 (BO3)
+      if (lines[i] && /^BO\d$/i.test(lines[i])) {
+        i++;
+      }
+
+      // 接下来是队伍1
+      const team1 = lines[i];
+      if (!team1 || !/^[a-zA-Z]/.test(team1) || team1.length < 3) {
+        i++;
+        continue;
+      }
+      i++;
+
+      // 队伍2
+      const team2 = lines[i];
+      if (!team2 || !/^[a-zA-Z]/.test(team2) || team2.length < 3) {
+        i++;
+        continue;
+      }
+      i++;
+
+      // 跳过胜率 (XX%)
+      while (lines[i] && /^\d+%$/.test(lines[i])) {
+        i++;
+      }
+
+      // 总比分 (格式: 2 或 0)
+      let homeScore = null;
+      let awayScore = null;
+
+      // 总比分通常是 0-2 或 2-0 这样的两行
+      const score1 = lines[i];
+      if (score1 && /^\d+$/.test(score1) && parseInt(score1) <= 3) {
+        homeScore = parseInt(score1);
+        i++;
+
+        const score2 = lines[i];
+        if (score2 && /^\d+$/.test(score2) && parseInt(score2) <= 3) {
+          awayScore = parseInt(score2);
+          i++;
+        }
+      }
+
+      // 记录比赛
+      matches.push({
+        time: time,
+        date: currentDate,
+        homeTeam: team1,
+        awayTeam: team2,
+        homeScore: homeScore,
+        awayScore: awayScore,
+        tournament: defaultTournament,
+        format: 'BO3',
+        source: '5eplay'
+      });
+
+      continue;
+    }
+
+    i++;
+  }
+
+  return matches;
+}
+
+// ==================== 主爬虫函数 ====================
 async function scrape5eplay() {
   console.log('[5eplay] 正在抓取数据...');
 
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({
+  const context = await browser.newContext({
     viewport: { width: 1920, height: 1080 },
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
   });
 
   try {
-    // 抓取赛果页面
-    console.log('[5eplay] 抓取赛果页面...');
-    await page.goto(URL_RESULTS, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(3000);
+    // 1. 获取赛事列表
+    const events = await getEventList(context);
 
-    const resultsText = await page.evaluate(() => document.body.innerText);
-    const allMatches = parse5eplayLines(resultsText);
+    // 2. 已知赛事URL映射
+    const knownUrls = {
+      'IEM 里约 2026': 'https://event.5eplay.com/csgo/events/csgo_tt_8242',
+    };
 
-    // 分离已完成和未开始的比赛
-    const finished = allMatches.filter(m => m.homeScore !== null && m.awayScore !== null && (m.homeScore > 0 || m.awayScore > 0));
-    const upcoming = allMatches.filter(m => m.homeScore === null || (m.homeScore === 0 && m.awayScore === 0));
+    // 3. 遍历每个一线赛事获取赛程
+    let allMatches = [];
+    for (const event of events) {
+      const eventUrl = knownUrls[event.name];
+      if (!eventUrl) continue;
+
+      const matches = await getMatchesFromEvent(context, eventUrl, event.name);
+      console.log(`[5eplay] ${event.name}: 找到 ${matches.length} 场比赛`);
+      allMatches.push(...matches);
+    }
+
+    // 4. 过滤热门战队
+    let filteredMatches = allMatches.filter(m =>
+      isHotTeam(m.homeTeam) || isHotTeam(m.awayTeam)
+    );
+    console.log(`[5eplay] 过滤热门战队后: ${filteredMatches.length} 场`);
+
+    // 5. 去重
+    const seenKeys = new Set();
+    filteredMatches = filteredMatches.filter(m => {
+      const key = `${m.date}|${m.time}|${m.homeTeam}|${m.awayTeam}`;
+      if (seenKeys.has(key)) return false;
+      seenKeys.add(key);
+      return true;
+    });
 
     await browser.close();
 
-    console.log(`[5eplay] 找到 ${finished.length} 场已完成比赛`);
-    console.log(`[5eplay] 找到 ${upcoming.length} 场即将开始的比赛`);
+    // 6. 分离已完成和即将开始的比赛
+    const finished = filteredMatches.filter(m => m.homeScore !== null && m.awayScore !== null);
+    const upcoming = filteredMatches.filter(m => m.homeScore === null);
+
+    console.log(`\n[5eplay] 已完成比赛: ${finished.length} 场`);
+    console.log(`[5eplay] 即将开始: ${upcoming.length} 场`);
 
     if (finished.length > 0) {
       console.log('\n✅ 已完成比赛:');
       finished.slice(0, 10).forEach(m => {
-        console.log(`  ${m.time} | ${m.homeTeam} ${m.homeScore}-${m.awayScore} ${m.awayTeam} [${m.tournament}]`);
+        console.log(`  ${m.date} ${m.time} | ${m.homeTeam} ${m.homeScore}-${m.awayScore} ${m.awayTeam} [${m.tournament}]`);
       });
     }
     if (upcoming.length > 0) {
       console.log('\n📅 即将开始:');
       upcoming.slice(0, 10).forEach(m => {
-        console.log(`  ${m.time} | ${m.homeTeam} vs ${m.awayTeam} [${m.tournament}]`);
+        console.log(`  ${m.date} ${m.time} | ${m.homeTeam} vs ${m.awayTeam} [${m.tournament}]`);
       });
     }
 
@@ -114,124 +261,6 @@ async function scrape5eplay() {
     await browser.close();
     return { finished: [], upcoming: [] };
   }
-}
-
-// ==================== 5eplay 文本解析 ====================
-function parse5eplayLines(text) {
-  const matches = [];
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-
-  // 扫描所有可能的队伍名位置
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // 只从可能是队伍名的行开始
-    if (!isTeamName(line)) continue;
-
-    let team1 = line;
-
-    // 往后找第二支队伍
-    let team2 = '';
-    let format = 'BO3';
-    let time = '';
-    let tournament = '';
-    let homeScore = null;
-    let awayScore = null;
-
-    let j = i + 1;
-    let foundSecondTeam = false;
-    let foundFormat = false;
-
-    while (j < i + 25 && j < lines.length) {
-      const curr = lines[j];
-
-      // 检测第二支队伍
-      if (!foundSecondTeam && isTeamName(curr) && curr !== team1) {
-        team2 = curr;
-        foundSecondTeam = true;
-        j++;
-        continue;
-      }
-
-      // 检测赛制
-      if (!foundFormat && /^BO[三五123]$/i.test(curr)) {
-        format = curr.toUpperCase().replace('五', '5').replace('三', '3');
-        foundFormat = true;
-        j++;
-        continue;
-      }
-
-      // 检测时间
-      if (/^\d{2}:\d{2}$/.test(curr) && !time) {
-        time = curr;
-        j++;
-        continue;
-      }
-
-      // 检测比分 (格式: X-Y 其中X和Y是数字)
-      if (foundSecondTeam && /^\d+-\d+$/.test(curr)) {
-        const [s1, s2] = curr.split('-').map(Number);
-        // 有实际比分的才记录
-        if (s1 > 0 || s2 > 0) {
-          homeScore = s1;
-          awayScore = s2;
-        }
-        j++;
-        continue;
-      }
-
-      // 检测赛事名（包含中文的较长字符串）
-      if (curr.length > 4 && /[\u4e00-\u9fa5]/.test(curr) && !tournament) {
-        tournament = curr;
-        j++;
-        continue;
-      }
-
-      j++;
-    }
-
-    // 过滤：至少要有两支队伍
-    if (!team1 || !team2) continue;
-
-    // 过滤：至少有一支热门战队
-    if (!isHotTeam(team1) && !isHotTeam(team2)) continue;
-
-    // 过滤：一线赛事
-    if (!isTier1Tournament(tournament)) continue;
-
-    // 过滤：排除明显错误的
-    if (team1.length < 2 || team2.length < 2) continue;
-
-    matches.push({
-      time: time,
-      homeTeam: team1,
-      awayTeam: team2,
-      homeScore: homeScore,
-      awayScore: awayScore,
-      tournament: tournament,
-      format: format,
-      source: '5eplay',
-      winner: homeScore !== null && awayScore !== null
-        ? (homeScore > awayScore ? team1 : team2)
-        : null
-    });
-  }
-
-  // 去重：同一赛事+同一时间+同一队伍只保留第一场
-  const seenKeys = new Set();
-  return matches.filter(m => {
-    const tournament = m.tournament || '';
-    const time = m.time || '';
-    const allTeams = [m.homeTeam.toUpperCase(), m.awayTeam.toUpperCase()].sort().join('|');
-    // 检查任一队伍是否已在此赛事+时间出现过
-    const teams = [m.homeTeam.toUpperCase(), m.awayTeam.toUpperCase()];
-    for (const team of teams) {
-      const key = `${tournament}|${time}|${team}`;
-      if (seenKeys.has(key)) return false;
-      seenKeys.add(key);
-    }
-    return true;
-  });
 }
 
 // ==================== 生成邮件 HTML ====================
@@ -250,7 +279,7 @@ function generateEmailHTML(data) {
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;">${m.homeScore || 0} - ${m.awayScore || 0}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;color:#666;">${m.awayTeam}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">${m.format}</td>
-        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;color:#888;">${m.time || '-'}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;color:#888;">${m.date ? m.date.slice(5) : ''} ${m.time || '-'}</td>
       </tr>
     `).join('');
   } else {
@@ -266,7 +295,7 @@ function generateEmailHTML(data) {
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;color:#007bff;">vs</td>
         <td style="padding:8px;border-bottom:1px solid #eee;">${m.awayTeam}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">${m.format}</td>
-        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;"><span style="background:#007bff;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">${m.time || '即将开始'}</span></td>
+        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;"><span style="background:#007bff;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">${m.date ? m.date.slice(5) : ''} ${m.time || '即将开始'}</span></td>
       </tr>
     `).join('');
   } else {
@@ -323,7 +352,7 @@ a { color: #FF6B35; text-decoration: none; }
 </table>
 
 <div class="footer">
-  <p>📍 数据来源：<a href="https://event.5eplay.com/csgo/matches" target="_blank">5eplay</a></p>
+  <p>📍 数据来源：<a href="https://event.5eplay.com/csgo/events" target="_blank">5eplay</a></p>
   <p>⏰ 自动生成于 ${todayStr} 08:00</p>
 </div>
 </div>
@@ -335,7 +364,7 @@ a { color: #FF6B35; text-decoration: none; }
 async function main() {
   try {
     console.log('='.repeat(50));
-    console.log('CS2 比赛日报 - 5eplay版');
+    console.log('CS2 比赛日报 - 5eplay赛事版');
     console.log('='.repeat(50));
 
     const data = await scrape5eplay();
