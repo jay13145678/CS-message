@@ -1,12 +1,54 @@
 /**
- * CS2 比赛数据爬虫 - VSGG 版本
- * 使用 Playwright + 正则解析
+ * CS2 比赛数据爬虫 - 热门战队版
+ * 只抓取热门战队的比赛
  */
 
 const { chromium } = require('playwright');
 const fs = require('fs');
 
 const DATA_SOURCE = 'https://vsgg.com/zh/cs2';
+
+// 热门战队列表
+const HOT_TEAMS = [
+  // 一线战队
+  'FaZe', 'Natus Vincere', 'NaVi', 'Vitality', 'G2', 'Heroic', 
+  'MOUZ', 'Spirit', 'Liquid', 'ENCE', 'NIP', 'Astralis',
+  'Cloud9', 'BIG', 'fnatic', 'Complexity', 'Imperial', 'FURIA',
+  'Virtus.pro', 'VP', 'VP.Prodigy', '9z', 'Fluxo', 'MIBR',
+  'Aurora', 'Team Liquid', 'Apeks', ' Eternal Fire', 'SINNERS',
+  // 中国战队
+  'TYLOO', 'RAZER', 'Eclipse', 'IG', 'NewHappy',
+  // 二三线但常见的
+  'B8', '1win', 'Sashi', 'Alliance', 'TNC', 'Execration',
+  'Nuclear', 'Fire Flux', 'Metizport', 'ARCRED', 'Young Ninjas'
+];
+
+// 赛制正则
+const FORMAT_REGEX = /^BO[123567]$/i;
+// 比分数字正则
+const SCORE_NUM_REGEX = /^[012]$/;
+// 具体时间正则
+const TIME_REGEX = /^\d{2}:\d{2}$/;
+// 相对时间正则
+const RELATIVE_TIME_REGEX = /^\d+分钟后$/;
+
+// 检查是否是热门战队
+function isHotTeam(name) {
+  if (!name) return false;
+  const upper = name.toUpperCase();
+  return HOT_TEAMS.some(t => upper.includes(t.toUpperCase()) || t.toUpperCase().includes(upper));
+}
+
+// 清理队名（保留完整队名）
+function cleanTeamName(name) {
+  if (!name) return name;
+  // 如果队名很短（2-3个字母），尝试找完整的
+  if (name.length <= 4) {
+    // 返回原始名
+    return name;
+  }
+  return name;
+}
 
 // ==================== VSGG 爬虫 ====================
 async function scrapeVSGG() {
@@ -24,23 +66,21 @@ async function scrapeVSGG() {
     
     // 获取页面文本内容
     const bodyText = await page.evaluate(() => document.body.innerText);
-    
-    // 关闭浏览器
     await browser.close();
     
     // 解析数据
     const data = parseVSGGText(bodyText);
     
-    console.log(`[VSGG] 找到 ${data.finished.length} 场已结束比赛`);
-    console.log(`[VSGG] 找到 ${data.upcoming.length} 场未开始比赛`);
+    console.log(`[VSGG] 找到 ${data.finished.length} 场热门战队已完成比赛`);
+    console.log(`[VSGG] 找到 ${data.upcoming.length} 场热门战队未开始比赛`);
     
     // 打印详情
     if (data.finished.length > 0) {
-      console.log('\n已完成比赛:');
+      console.log('\n✅ 已完成比赛:');
       data.finished.forEach(m => console.log(`  ${m.homeTeam} ${m.homeScore}-${m.awayScore} ${m.awayTeam} [${m.tournament}] ${m.matchTime || ''}`));
     }
     if (data.upcoming.length > 0) {
-      console.log('\n即将开始:');
+      console.log('\n📅 即将开始:');
       data.upcoming.forEach(m => console.log(`  ${m.homeTeam} vs ${m.awayTeam} [${m.tournament}] ${m.matchTime || ''}`));
     }
     
@@ -54,17 +94,6 @@ async function scrapeVSGG() {
 }
 
 // ==================== 文本解析 ====================
-// 战队名正则
-const TEAM_REGEX = /^[A-Za-z][A-Za-z0-9_\s&|'-]{0,20}$/;
-// 赛制正则
-const FORMAT_REGEX = /^BO[1357]$/i;
-// 比分数字正则
-const SCORE_NUM_REGEX = /^[012]$/;
-// 时间正则
-const TIME_REGEX = /^\d{2}:\d{2}$/;
-// 相对时间正则
-const RELATIVE_TIME_REGEX = /^\d+分钟|小时后$/;
-
 function parseVSGGText(text) {
   const finished = [];
   const upcoming = [];
@@ -85,60 +114,59 @@ function parseVSGGText(text) {
       const score1 = parseInt(line);
       const score2 = parseInt(lines[i + 2]);
       
-      // 往前找两支队伍、赛制和时间
-      let team1 = '', team2 = '', format = '', matchTime = '';
-      
-      for (let k = i - 1; k >= 0 && k > i - 12; k--) {
+      // 往前找队A
+      let team1 = '', matchTime = '', format = 'BO3';
+      for (let k = i - 1; k >= 0 && k > i - 8; k--) {
         const prev = lines[k];
         if (!prev) continue;
-        
-        // 赛制
-        if (FORMAT_REGEX.test(prev)) {
-          if (!format) format = prev.toUpperCase();
-          continue;
+        if (isHotTeam(prev) && !team1) {
+          team1 = cleanTeamName(prev);
         }
-        
-        // 跳过状态文字
-        if (prev === '已结束' || prev === '未开始' || prev === 'LIVE') continue;
-        
-        // 捕获具体时间
-        if (TIME_REGEX.test(prev)) {
-          if (!matchTime) matchTime = prev;
-          continue;
+        if (FORMAT_REGEX.test(prev) && format === 'BO3') {
+          format = prev.toUpperCase();
         }
-        
-        // 匹配战队名
-        if (TEAM_REGEX.test(prev) && !SCORE_NUM_REGEX.test(prev)) {
-          if (!team2) {
-            team2 = prev;
-          } else if (!team1 && prev !== team2) {
-            team1 = prev;
-          }
+        if (TIME_REGEX.test(prev) && !matchTime) {
+          matchTime = prev;
+        }
+      }
+      
+      // 往后找队B
+      let team2 = '';
+      for (let k = i + 3; k < lines.length && k < i + 6; k++) {
+        const next = lines[k];
+        if (next && isHotTeam(next) && !team2) {
+          team2 = cleanTeamName(next);
+        }
+        if (FORMAT_REGEX.test(next) && format === 'BO3') {
+          format = next.toUpperCase();
+        }
+        if (TIME_REGEX.test(next) && !matchTime) {
+          matchTime = next;
         }
       }
       
       // 往前找赛事名
-      for (let k = i - 1; k >= 0 && k > i - 20; k--) {
+      for (let k = i - 1; k >= 0 && k > i - 15; k--) {
         const prev = lines[k];
         if (prev && prev.length > 5 && prev.length < 60 && 
-            !FORMAT_REGEX.test(prev) && !TEAM_REGEX.test(prev) &&
-            !SCORE_NUM_REGEX.test(prev) &&
-            prev !== '已结束' && prev !== '未开始' &&
-            !TIME_REGEX.test(prev)) {
+            !FORMAT_REGEX.test(prev) && !isHotTeam(prev) &&
+            !TIME_REGEX.test(prev) &&
+            prev !== '已结束' && prev !== '未开始') {
           currentTournament = prev;
           break;
         }
       }
       
-      if (team1 && team2 && currentTournament) {
+      // 只有两边都是热门战队才记录
+      if (isHotTeam(team1) && isHotTeam(team2) && currentTournament) {
         finished.push({
           tournament: currentTournament,
           homeTeam: team1,
           awayTeam: team2,
           homeScore: score1,
           awayScore: score2,
-          format: format || 'BO3',
-          matchTime: matchTime || '',
+          format: format,
+          matchTime: matchTime,
           winner: score1 > score2 ? team1 : team2,
           source: 'VSGG'
         });
@@ -149,25 +177,28 @@ function parseVSGGText(text) {
     
     // 匹配 "vs" (未开始)
     if (line.toLowerCase() === 'vs' && i > 0 && i < lines.length - 1) {
-      const team1 = lines[i - 1];
-      let team2 = '', format = '', matchTime = '';
+      const team1 = cleanTeamName(lines[i - 1]);
+      let team2 = '', format = 'BO3', matchTime = '';
       
       // 往后找对手
       for (let j = i + 1; j < lines.length && j < i + 6; j++) {
         const next = lines[j];
-        if (next && TEAM_REGEX.test(next) && !SCORE_NUM_REGEX.test(next) && !TIME_REGEX.test(next)) {
-          if (!team2) team2 = next;
+        if (next && isHotTeam(next) && !team2) {
+          team2 = cleanTeamName(next);
         }
-        if (FORMAT_REGEX.test(next) && !format) {
+        if (FORMAT_REGEX.test(next) && format === 'BO3') {
           format = next.toUpperCase();
+        }
+        if (TIME_REGEX.test(next) && !matchTime) {
+          matchTime = next;
         }
       }
       
-      // 往前找时间（相对时间如"4分钟后"）
+      // 往前找相对时间
       for (let j = i - 1; j >= 0 && j > i - 6; j--) {
         const prev = lines[j];
-        if (prev && RELATIVE_TIME_REGEX.test(prev)) {
-          if (!matchTime) matchTime = prev;
+        if (prev && RELATIVE_TIME_REGEX.test(prev) && !matchTime) {
+          matchTime = prev;
         }
       }
       
@@ -175,23 +206,23 @@ function parseVSGGText(text) {
       for (let j = i - 2; j >= 0 && j > i - 20; j--) {
         const prev = lines[j];
         if (prev && prev.length > 5 && prev.length < 60 && 
-            !FORMAT_REGEX.test(prev) && !TEAM_REGEX.test(prev) &&
-            !SCORE_NUM_REGEX.test(prev) &&
-            prev !== '已结束' && prev !== '未开始' &&
+            !FORMAT_REGEX.test(prev) && !isHotTeam(prev) &&
             !TIME_REGEX.test(prev) &&
+            prev !== '已结束' && prev !== '未开始' &&
             !RELATIVE_TIME_REGEX.test(prev)) {
           currentTournament = prev;
           break;
         }
       }
       
-      if (team1 && team2 && team1 !== team2 && currentTournament && TEAM_REGEX.test(team1)) {
+      // 只有两边都是热门战队才记录
+      if (isHotTeam(team1) && isHotTeam(team2) && team1 !== team2 && currentTournament) {
         upcoming.push({
           tournament: currentTournament,
           homeTeam: team1,
           awayTeam: team2,
-          format: format || 'BO3',
-          matchTime: matchTime || '',
+          format: format,
+          matchTime: matchTime,
           source: 'VSGG'
         });
       }
@@ -242,7 +273,7 @@ function generateEmailHTML(data) {
       </tr>
     `).join('');
   } else {
-    finishedHtml = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">暂无比赛数据</td></tr>';
+    finishedHtml = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">暂无热门战队比赛数据</td></tr>';
   }
   
   // 今日赛程
@@ -259,7 +290,7 @@ function generateEmailHTML(data) {
       </tr>
     `).join('');
   } else {
-    upcomingHtml = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">暂无赛程数据</td></tr>';
+    upcomingHtml = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">暂无热门战队赛程</td></tr>';
   }
   
   return `<!DOCTYPE html>
@@ -282,7 +313,7 @@ a { color: #FF6B35; text-decoration: none; }
 </head>
 <body>
 <div class="card">
-<h1>🔥 CS2 比赛日报</h1>
+<h1>🔥 CS2 比赛日报（热门战队）</h1>
 <p class="subtitle">${todayStr}</p>
 
 <h2>✅ 昨日（${yesterdayStr}）已完成比赛</h2>
@@ -324,7 +355,7 @@ a { color: #FF6B35; text-decoration: none; }
 async function main() {
   try {
     console.log('='.repeat(50));
-    console.log('CS2 比赛日报 - VSGG Playwright 版本');
+    console.log('CS2 比赛日报 - 热门战队版');
     console.log('='.repeat(50));
     
     // 抓取数据
