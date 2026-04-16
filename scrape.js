@@ -1,258 +1,216 @@
 /**
- * CS2 比赛数据爬虫 - 热门战队版
- * 只抓取热门战队的比赛
+ * CS2 比赛数据爬虫 - 5eplay版
+ * 数据源：https://event.5eplay.com/csgo/matches
  */
 
 const { chromium } = require('playwright');
 const fs = require('fs');
 
-const DATA_SOURCE = 'https://vsgg.com/zh/cs2';
+// 5eplay 页面URL
+const URL_RESULTS = 'https://event.5eplay.com/csgo/matches?tab=result';
+const URL_UPCOMING = 'https://event.5eplay.com/csgo/matches?tab=schedule';
 
-// 热门战队列表（覆盖 VSGG 上所有队伍）
+// 热门战队列表
 const HOT_TEAMS = [
-  // 一线战队
-  'FaZe', 'Natus Vincere', 'NaVi', 'Vitality', 'G2', 'Heroic', 
+  'FaZe', 'Natus Vincere', 'NaVi', 'Vitality', 'G2', 'Heroic',
   'MOUZ', 'Spirit', 'Liquid', 'ENCE', 'NIP', 'Astralis',
   'Cloud9', 'BIG', 'fnatic', 'Complexity', 'Imperial', 'FURIA',
-  'Virtus.pro', 'VP', 'VP.Prodigy', '9z', 'Fluxo', 'MIBR',
-  'Aurora', 'Team Liquid', 'Apeks', 'Eternal Fire', 'SINNERS',
-  // 中国战队
+  'Virtus.pro', 'VP', '9z', 'Fluxo', 'MIBR',
+  'Aurora', 'Apeks', 'Eternal Fire', 'SINNERS',
   'TYLOO', 'RAZER', 'Eclipse', 'IG', 'NewHappy',
-  // 二三线但常见的
-  'B8', '1win', 'Sashi', 'Alliance', 'TNC', 'Execration',
+  'B8', '1win', 'Sashi', 'Alliance', 'Execration',
   'Nuclear', 'Fire Flux', 'Metizport', 'ARCRED', 'Young Ninjas',
-  // VSGG 上其他队伍
   'Lavked', 'Bebop', 'ESC', 'Ursa', 'regain', 'EMPIRE',
   'Falcons', 'KOLESIE', 'TDK', 'MANA', 'PARIVISION', 'The MongolZ'
 ];
 
-// 赛制正则
-const FORMAT_REGEX = /^BO[123567]$/i;
-// 比分数字正则
-const SCORE_NUM_REGEX = /^[012]$/;
-// 具体时间正则
-const TIME_REGEX = /^\d{2}:\d{2}$/;
-// 相对时间正则
-const RELATIVE_TIME_REGEX = /^\d+分钟后$/;
-
-// 检查是否是热门战队
 function isHotTeam(name) {
   if (!name) return false;
   const upper = name.toUpperCase();
   return HOT_TEAMS.some(t => upper.includes(t.toUpperCase()) || t.toUpperCase().includes(upper));
 }
 
-// 清理队名（保留完整队名）
-function cleanTeamName(name) {
-  if (!name) return name;
-  // 如果队名很短（2-3个字母），尝试找完整的
-  if (name.length <= 4) {
-    // 返回原始名
-    return name;
-  }
-  return name;
+// 检测是否是队伍名（不是时间、赛制、百分比等）
+function isTeamName(candidate) {
+  if (!candidate || candidate.length < 2 || candidate.length > 25) return false;
+  // 排除已知格式
+  if (/^\d{2}:\d{2}$/.test(candidate)) return false; // 时间
+  if (/^\d{4}-\d{2}/.test(candidate)) return false; // 日期
+  // 排除所有赛制格式（BO1/BO2/BO3/BO5等）
+  if (/^BO\d$/i.test(candidate)) return false; // BO1/BO2/BO3等
+  if (/^BO[三五1-9]$/i.test(candidate)) return false; // BO三/BO五等
+  if (/^\d+%$/.test(candidate)) return false; // 百分比
+  if (/^\d+-\d+$/.test(candidate)) return false; // 比分 (如 13-5)
+  if (/^--$/.test(candidate)) return false; // 占位符
+  if (/^(进行中|赛前分析|已结束)$/.test(candidate)) return false; // 状态
+  // 排除全数字（比分、地图数等）
+  if (/^\d+$/.test(candidate)) return false;
+  // 排除包含中文的（通常是赛事名）
+  if (/[\u4e00-\u9fa5]/.test(candidate)) return false;
+  // 队名通常以字母开头且至少3个字符
+  if (!/^[a-zA-Z]/.test(candidate)) return false;
+  if (candidate.length < 3) return false;
+  // 排除常见非队名
+  if (/^(CS|ESC|ESCAPE|TBD|NEXT)$/i.test(candidate)) return false;
+  return true;
 }
 
-// ==================== VSGG 爬虫 ====================
-async function scrapeVSGG() {
-  console.log('[VSGG] 正在抓取数据...');
-  
+// ==================== 5eplay 爬虫 ====================
+async function scrape5eplay() {
+  console.log('[5eplay] 正在抓取数据...');
+
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({
     viewport: { width: 1920, height: 1080 },
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
   });
-  
+
   try {
-    await page.goto(DATA_SOURCE, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // 抓取赛果页面
+    console.log('[5eplay] 抓取赛果页面...');
+    await page.goto(URL_RESULTS, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(3000);
-    
-    // 获取页面文本内容
-    const bodyText = await page.evaluate(() => document.body.innerText);
+
+    const resultsText = await page.evaluate(() => document.body.innerText);
+    const allMatches = parse5eplayLines(resultsText);
+
+    // 分离已完成和未开始的比赛
+    const finished = allMatches.filter(m => m.homeScore !== null && m.awayScore !== null && (m.homeScore > 0 || m.awayScore > 0));
+    const upcoming = allMatches.filter(m => m.homeScore === null || (m.homeScore === 0 && m.awayScore === 0));
+
     await browser.close();
-    
-    // 解析数据
-    const data = parseVSGGText(bodyText);
-    
-    console.log(`[VSGG] 找到 ${data.finished.length} 场热门战队已完成比赛`);
-    console.log(`[VSGG] 找到 ${data.upcoming.length} 场热门战队未开始比赛`);
-    
-    // 打印详情
-    if (data.finished.length > 0) {
+
+    console.log(`[5eplay] 找到 ${finished.length} 场已完成比赛`);
+    console.log(`[5eplay] 找到 ${upcoming.length} 场即将开始的比赛`);
+
+    if (finished.length > 0) {
       console.log('\n✅ 已完成比赛:');
-      data.finished.forEach(m => console.log(`  ${m.homeTeam} ${m.homeScore}-${m.awayScore} ${m.awayTeam} [${m.tournament}] ${m.matchTime || ''}`));
+      finished.slice(0, 10).forEach(m => {
+        console.log(`  ${m.time} | ${m.homeTeam} ${m.homeScore}-${m.awayScore} ${m.awayTeam} [${m.tournament}]`);
+      });
     }
-    if (data.upcoming.length > 0) {
+    if (upcoming.length > 0) {
       console.log('\n📅 即将开始:');
-      data.upcoming.forEach(m => console.log(`  ${m.homeTeam} vs ${m.awayTeam} [${m.tournament}] ${m.matchTime || ''}`));
+      upcoming.slice(0, 10).forEach(m => {
+        console.log(`  ${m.time} | ${m.homeTeam} vs ${m.awayTeam} [${m.tournament}]`);
+      });
     }
-    
-    return data;
-    
+
+    return { finished, upcoming };
+
   } catch (error) {
-    console.error('[VSGG] 抓取失败:', error.message);
+    console.error('[5eplay] 抓取失败:', error.message);
     await browser.close();
     return { finished: [], upcoming: [] };
   }
 }
 
-// ==================== 文本解析 ====================
-function parseVSGGText(text) {
-  const finished = [];
-  const upcoming = [];
-  
-  const lines = text.split('\n').map(l => l.trim());
-  
-  let currentTournament = '';
-  
+// ==================== 5eplay 文本解析 ====================
+function parse5eplayLines(text) {
+  const matches = [];
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+
+  // 扫描所有可能的队伍名位置
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    
-    // 匹配分行比分格式：数字 + "-" + 数字
-    if (SCORE_NUM_REGEX.test(line) && 
-        i + 2 < lines.length && 
-        lines[i + 1] === '-' && 
-        SCORE_NUM_REGEX.test(lines[i + 2])) {
-      
-      const score1 = parseInt(line);
-      const score2 = parseInt(lines[i + 2]);
-      
-      // 往前找队A
-      let team1 = '', matchTime = '', format = 'BO3';
-      for (let k = i - 1; k >= 0 && k > i - 8; k--) {
-        const prev = lines[k];
-        if (!prev) continue;
-        if (isHotTeam(prev) && !team1) {
-          team1 = cleanTeamName(prev);
-        }
-        if (FORMAT_REGEX.test(prev) && format === 'BO3') {
-          format = prev.toUpperCase();
-        }
-        if (TIME_REGEX.test(prev) && !matchTime) {
-          matchTime = prev;
-        }
+
+    // 只从可能是队伍名的行开始
+    if (!isTeamName(line)) continue;
+
+    let team1 = line;
+
+    // 往后找第二支队伍
+    let team2 = '';
+    let format = 'BO3';
+    let time = '';
+    let tournament = '';
+    let homeScore = null;
+    let awayScore = null;
+
+    let j = i + 1;
+    let foundSecondTeam = false;
+    let foundFormat = false;
+
+    while (j < i + 25 && j < lines.length) {
+      const curr = lines[j];
+
+      // 检测第二支队伍
+      if (!foundSecondTeam && isTeamName(curr) && curr !== team1) {
+        team2 = curr;
+        foundSecondTeam = true;
+        j++;
+        continue;
       }
-      
-      // 往后找队B
-      let team2 = '';
-      for (let k = i + 3; k < lines.length && k < i + 6; k++) {
-        const next = lines[k];
-        if (next && isHotTeam(next) && !team2) {
-          team2 = cleanTeamName(next);
-        }
-        if (FORMAT_REGEX.test(next) && format === 'BO3') {
-          format = next.toUpperCase();
-        }
-        if (TIME_REGEX.test(next) && !matchTime) {
-          matchTime = next;
-        }
+
+      // 检测赛制
+      if (!foundFormat && /^BO[三五123]$/i.test(curr)) {
+        format = curr.toUpperCase().replace('五', '5').replace('三', '3');
+        foundFormat = true;
+        j++;
+        continue;
       }
-      
-      // 往前找赛事名
-      for (let k = i - 1; k >= 0 && k > i - 15; k--) {
-        const prev = lines[k];
-        if (prev && prev.length > 5 && prev.length < 60 && 
-            !FORMAT_REGEX.test(prev) && !isHotTeam(prev) &&
-            !TIME_REGEX.test(prev) &&
-            prev !== '已结束' && prev !== '未开始') {
-          currentTournament = prev;
-          break;
+
+      // 检测时间
+      if (/^\d{2}:\d{2}$/.test(curr) && !time) {
+        time = curr;
+        j++;
+        continue;
+      }
+
+      // 检测比分 (格式: X-Y 其中X和Y是数字)
+      if (foundSecondTeam && /^\d+-\d+$/.test(curr)) {
+        const [s1, s2] = curr.split('-').map(Number);
+        // 有实际比分的才记录
+        if (s1 > 0 || s2 > 0) {
+          homeScore = s1;
+          awayScore = s2;
         }
+        j++;
+        continue;
       }
-      
-      // 只有两边都是热门战队才记录
-      if (isHotTeam(team1) && isHotTeam(team2) && currentTournament) {
-        finished.push({
-          tournament: currentTournament,
-          homeTeam: team1,
-          awayTeam: team2,
-          homeScore: score1,
-          awayScore: score2,
-          format: format,
-          matchTime: matchTime,
-          winner: score1 > score2 ? team1 : team2,
-          source: 'VSGG'
-        });
+
+      // 检测赛事名（包含中文的较长字符串）
+      if (curr.length > 4 && /[\u4e00-\u9fa5]/.test(curr) && !tournament) {
+        tournament = curr;
+        j++;
+        continue;
       }
-      
-      i += 2;
+
+      j++;
     }
-    
-    // 匹配 "vs" (未开始)
-    if (line.toLowerCase() === 'vs' && i > 0 && i < lines.length - 1) {
-      const team1 = cleanTeamName(lines[i - 1]);
-      let team2 = '', format = 'BO3', matchTime = '';
-      
-      // 往后找对手
-      for (let j = i + 1; j < lines.length && j < i + 6; j++) {
-        const next = lines[j];
-        if (next && isHotTeam(next) && !team2) {
-          team2 = cleanTeamName(next);
-        }
-        if (FORMAT_REGEX.test(next) && format === 'BO3') {
-          format = next.toUpperCase();
-        }
-        if (TIME_REGEX.test(next) && !matchTime) {
-          matchTime = next;
-        }
-      }
-      
-      // 往前找相对时间
-      for (let j = i - 1; j >= 0 && j > i - 6; j--) {
-        const prev = lines[j];
-        if (prev && RELATIVE_TIME_REGEX.test(prev) && !matchTime) {
-          matchTime = prev;
-        }
-      }
-      
-      // 往前找赛事名
-      for (let j = i - 2; j >= 0 && j > i - 20; j--) {
-        const prev = lines[j];
-        if (prev && prev.length > 5 && prev.length < 60 && 
-            !FORMAT_REGEX.test(prev) && !isHotTeam(prev) &&
-            !TIME_REGEX.test(prev) &&
-            prev !== '已结束' && prev !== '未开始' &&
-            !RELATIVE_TIME_REGEX.test(prev)) {
-          currentTournament = prev;
-          break;
-        }
-      }
-      
-      // 只有两边都是热门战队才记录
-      if (isHotTeam(team1) && isHotTeam(team2) && team1 !== team2 && currentTournament) {
-        upcoming.push({
-          tournament: currentTournament,
-          homeTeam: team1,
-          awayTeam: team2,
-          format: format,
-          matchTime: matchTime,
-          source: 'VSGG'
-        });
-      }
-    }
+
+    // 过滤：至少要有两支队伍
+    if (!team1 || !team2) continue;
+
+    // 过滤：至少有一支热门战队
+    if (!isHotTeam(team1) && !isHotTeam(team2)) continue;
+
+    // 过滤：排除明显错误的
+    if (team1.length < 2 || team2.length < 2) continue;
+
+    matches.push({
+      time: time,
+      homeTeam: team1,
+      awayTeam: team2,
+      homeScore: homeScore,
+      awayScore: awayScore,
+      tournament: tournament,
+      format: format,
+      source: '5eplay',
+      winner: homeScore !== null && awayScore !== null
+        ? (homeScore > awayScore ? team1 : team2)
+        : null
+    });
   }
-  
+
   // 去重
-  const seenFinished = new Set();
-  const uniqueFinished = finished.filter(m => {
-    const key = `${m.homeTeam}|${m.awayTeam}|${m.homeScore}-${m.awayScore}`;
-    if (seenFinished.has(key)) return false;
-    seenFinished.add(key);
+  const seen = new Set();
+  return matches.filter(m => {
+    const key = `${m.homeTeam}|${m.awayTeam}|${m.homeScore || '?'}|${m.time}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
-  
-  const seenUpcoming = new Set();
-  const uniqueUpcoming = upcoming.filter(m => {
-    const key = `${m.homeTeam}|${m.awayTeam}`;
-    if (seenUpcoming.has(key)) return false;
-    seenUpcoming.add(key);
-    return true;
-  });
-  
-  return {
-    finished: uniqueFinished,
-    upcoming: uniqueUpcoming
-  };
 }
 
 // ==================== 生成邮件 HTML ====================
@@ -261,41 +219,39 @@ function generateEmailHTML(data) {
   const todayStr = today.toISOString().split('T')[0];
   const yesterday = new Date(today - 86400000);
   const yesterdayStr = yesterday.toISOString().split('T')[0];
-  
-  // 昨日已结束比赛
+
   let finishedHtml = '';
   if (data.finished && data.finished.length > 0) {
-    finishedHtml = data.finished.slice(0, 15).map(m => `
+    finishedHtml = data.finished.map(m => `
       <tr>
-        <td style="padding:8px;border-bottom:1px solid #eee;">${m.tournament}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;">${m.tournament || '-'}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;color:#28a745;font-weight:bold;">${m.homeTeam}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;">${m.homeScore || 0} - ${m.awayScore || 0}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;color:#666;">${m.awayTeam}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">${m.format}</td>
-        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;color:#888;">${m.matchTime || '-'}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;color:#888;">${m.time || '-'}</td>
       </tr>
     `).join('');
   } else {
     finishedHtml = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">暂无热门战队比赛数据</td></tr>';
   }
-  
-  // 今日赛程
+
   let upcomingHtml = '';
   if (data.upcoming && data.upcoming.length > 0) {
-    upcomingHtml = data.upcoming.slice(0, 15).map(m => `
+    upcomingHtml = data.upcoming.map(m => `
       <tr>
-        <td style="padding:8px;border-bottom:1px solid #eee;">${m.tournament}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;">${m.tournament || '-'}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;">${m.homeTeam}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;color:#007bff;">vs</td>
         <td style="padding:8px;border-bottom:1px solid #eee;">${m.awayTeam}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">${m.format}</td>
-        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;"><span style="background:#007bff;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">${m.matchTime || '即将开始'}</span></td>
+        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;"><span style="background:#007bff;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">${m.time || '即将开始'}</span></td>
       </tr>
     `).join('');
   } else {
     upcomingHtml = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">暂无热门战队赛程</td></tr>';
   }
-  
+
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -346,7 +302,7 @@ a { color: #FF6B35; text-decoration: none; }
 </table>
 
 <div class="footer">
-  <p>📍 数据来源：<a href="https://vsgg.com/zh/cs2" target="_blank">VSGG</a></p>
+  <p>📍 数据来源：<a href="https://event.5eplay.com/csgo/matches" target="_blank">5eplay</a></p>
   <p>⏰ 自动生成于 ${todayStr} 08:00</p>
 </div>
 </div>
@@ -358,25 +314,22 @@ a { color: #FF6B35; text-decoration: none; }
 async function main() {
   try {
     console.log('='.repeat(50));
-    console.log('CS2 比赛日报 - 热门战队版');
+    console.log('CS2 比赛日报 - 5eplay版');
     console.log('='.repeat(50));
-    
-    // 抓取数据
-    const data = await scrapeVSGG();
-    
-    // 保存原始数据
+
+    const data = await scrape5eplay();
+
     fs.writeFileSync('cs2_data.json', JSON.stringify(data, null, 2));
     console.log('\n数据已保存到 cs2_data.json');
-    
-    // 生成邮件 HTML
+
     const emailHTML = generateEmailHTML(data);
     fs.writeFileSync('email_content.html', emailHTML);
     console.log('邮件内容已保存到 email_content.html');
-    
+
     console.log('\n' + '='.repeat(50));
     console.log('执行完成!');
     console.log('='.repeat(50));
-    
+
   } catch (error) {
     console.error('执行失败:', error);
     process.exit(1);
