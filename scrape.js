@@ -242,8 +242,20 @@ async function scrape5eplay() {
     await browser.close();
 
     // 6. 分离已完成和即将开始的比赛
-    const finished = filteredMatches.filter(m => m.homeScore !== null && m.awayScore !== null);
-    const upcoming = filteredMatches.filter(m => m.homeScore === null);
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    const yesterday = new Date(today - 86400000).toISOString().split('T')[0];
+
+    // 只保留昨天和今天的已完成比赛
+    const finished = filteredMatches.filter(m =>
+      m.homeScore !== null && m.awayScore !== null &&
+      (m.date === yesterday || m.date === todayStr)
+    );
+
+    // 赛程只保留今天及以后的
+    const upcoming = filteredMatches.filter(m =>
+      m.homeScore === null && m.date >= todayStr
+    );
 
     console.log(`\n[5eplay] 已完成比赛: ${finished.length} 场`);
     console.log(`[5eplay] 即将开始: ${upcoming.length} 场`);
