@@ -1,12 +1,11 @@
 /**
  * CS2 比赛数据爬虫 - Node.js + Playwright 版本
  * 数据来源: VSGG (vsgg.com/zh/cs2)
+ * 基于真实页面结构重写
  */
 
 const { chromium } = require('playwright');
-const { execSync } = require('child_process');
 const fs = require('fs');
-const path = require('path');
 
 const DATA_URL = 'https://vsgg.com/zh/cs2';
 
@@ -14,67 +13,111 @@ async function scrapeCS2Data() {
   console.log('启动浏览器...');
   
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  const page = await browser.newPage({ 
+    viewport: { width: 1920, height: 1080 },
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  });
   
   console.log(`访问 ${DATA_URL}...`);
-  await page.goto(DATA_URL, { waitUntil: 'networkidle', timeout: 60000 });
   
-  // 等待页面完全加载
-  await page.waitForTimeout(5000);
-  
-  // 获取页面文本
-  const pageText = await page.innerText('body');
-  
-  // 提取队伍名称
-  const teamPattern = /[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*/g;
-  const allTeams = pageText.match(teamPattern) || [];
-  const uniqueTeams = [...new Set(allTeams.filter(t => t.length > 3 && t.length < 25))];
-  
-  console.log(`找到 ${uniqueTeams.length} 个队伍`);
-  
-  // 热门队伍
-  const hotTeams = ['Vitality', 'Spirit', 'G2', 'FaZe', 'NaVi', 'Natus Vincere', 
-                    'Astralis', 'Heroic', 'MOUZ', 'ENCE', 'Liquid', 'BIG', 
-                    'Cloud9', 'C9', 'NIP', 'NiP', 'FURIA', 'Imperial', 'MIBR'];
-  const foundHot = uniqueTeams.filter(t => hotTeams.some(h => t.includes(h)));
-  console.log('热门队伍:', foundHot);
-  
-  // 提取比分
-  const scorePattern = /([A-Za-z][a-zA-Z\s]+?)\s+(\d+)\s*[-:]\s*(\d+)\s+([A-Za-z][a-zA-Z\s]+?)(?:\n|$)/g;
-  const scores = [];
-  let match;
-  while ((match = scorePattern.exec(pageText)) !== null) {
-    scores.push({
-      teamA: match[1].trim(),
-      scoreA: parseInt(match[2]),
-      scoreB: parseInt(match[3]),
-      teamB: match[4].trim()
-    });
+  try {
+    await page.goto(DATA_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+  } catch (e) {
+    console.log('页面加载超时，继续等待...');
   }
-  console.log(`找到 ${scores.length} 组比分`);
   
-  // 保存数据到文件
-  const data = {
-    timestamp: new Date().toISOString(),
-    teams: uniqueTeams.slice(0, 50),
-    hotTeams: foundHot,
-    scores: scores.slice(0, 20),
-    pagePreview: pageText.substring(0, 2000)
-  };
+  // 等待页面渲染
+  await page.waitForTimeout(3000);
   
-  fs.writeFileSync('cs2_data.json', JSON.stringify(data, null, 2));
+  // 等待比赛列表加载
+  try {
+    await page.waitForSelector('.match-item', { timeout: 10000 });
+  } catch (e) {
+    console.log('未找到 match-item，尝试其他选择器...');
+  }
+  
+  // 提取比赛数据
+  const matches = await page.evaluate(() => {
+    const results = {
+      finished: [],   // 已结束比赛
+      upcoming: []    // 未开始比赛
+    };
+    
+    // 查找所有比赛项
+    const matchItems = document.querySelectorAll('.match-item');
+    
+    matchItems.forEach(item => {
+      const status = item.getAttribute('data-status') || 
+                     (item.classList.contains('finished') ? 'finished' : 'upcoming');
+      
+      // 获取赛事名称
+      const tournamentEl = item.querySelector('.tournament-name');
+      const tournament = tournamentEl ? tournamentEl.textContent.trim() : '未知赛事';
+      
+      // 获取队伍名称
+      const homeTeamEl = item.querySelector('.team.home .team-name');
+      const awayTeamEl = item.querySelector('.team.away .team-name');
+      const homeTeam = homeTeamEl ? homeTeamEl.textContent.trim() : '';
+      const awayTeam = awayTeamEl ? awayTeamEl.textContent.trim() : '';
+      
+      // 获取赛制
+      const formatEl = item.querySelector('.match-format');
+      const format = formatEl ? formatEl.textContent.trim() : '';
+      
+      // 提取比分（仅已完成比赛）
+      let homeScore = null;
+      let awayScore = null;
+      let winner = null;
+      
+      if (status === 'finished' || item.classList.contains('finished')) {
+        const homeScoreEl = item.querySelector('.team.home .score');
+        const awayScoreEl = item.querySelector('.team.away .score');
+        homeScore = homeScoreEl ? parseInt(homeScoreEl.textContent) : null;
+        awayScore = awayScoreEl ? parseInt(awayScoreEl.textContent) : null;
+        
+        // 判断获胜方
+        const homeTeamEl2 = item.querySelector('.team.home');
+        if (homeTeamEl2 && homeTeamEl2.classList.contains('winner')) {
+          winner = homeTeam;
+        } else {
+          winner = awayTeam;
+        }
+      }
+      
+      // 只保留有效数据
+      if (homeTeam && awayTeam) {
+        const matchData = {
+          tournament,
+          homeTeam,
+          awayTeam,
+          format,
+          ...(status === 'finished' || item.classList.contains('finished') ? {
+            homeScore,
+            awayScore,
+            winner
+          } : {})
+        };
+        
+        if (status === 'finished' || item.classList.contains('finished')) {
+          results.finished.push(matchData);
+        } else {
+          results.upcoming.push(matchData);
+        }
+      }
+    });
+    
+    return results;
+  });
+  
+  console.log(`找到 ${matches.finished.length} 场已结束比赛`);
+  console.log(`找到 ${matches.upcoming.length} 场未开始比赛`);
+  
+  // 保存原始数据
+  fs.writeFileSync('cs2_data.json', JSON.stringify(matches, null, 2));
   console.log('数据已保存到 cs2_data.json');
   
   await browser.close();
-  
-  return data;
-}
-
-// 发送邮件 (调用 Python)
-function sendEmail(subject, htmlContent) {
-  // 生成临时 HTML 文件
-  fs.writeFileSync('email_content.html', htmlContent);
-  console.log('邮件内容已生成');
+  return matches;
 }
 
 // 生成邮件 HTML
@@ -84,24 +127,37 @@ function generateEmailHTML(data) {
   const yesterday = new Date(today - 86400000);
   const yesterdayStr = yesterday.toISOString().split('T')[0];
   
-  let hotTeamsHtml = '';
-  if (data.hotTeams && data.hotTeams.length > 0) {
-    hotTeamsHtml = data.hotTeams.join(', ');
-  } else {
-    hotTeamsHtml = '暂无热门队伍数据';
-  }
-  
-  let scoresHtml = '';
-  if (data.scores && data.scores.length > 0) {
-    scoresHtml = data.scores.slice(0, 10).map(s => `
+  // 昨日已结束比赛
+  let finishedHtml = '';
+  if (data.finished && data.finished.length > 0) {
+    finishedHtml = data.finished.map(m => `
       <tr>
-        <td class="winner">${s.teamA}</td>
-        <td style="text-align:center;font-weight:bold">${s.scoreA}-${s.scoreB}</td>
-        <td class="loser">${s.teamB}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;">${m.tournament}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;color:#28a745;font-weight:bold;">${m.homeTeam}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;">${m.homeScore || 0} - ${m.awayScore || 0}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;color:#666;">${m.awayTeam}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;">${m.format}</td>
       </tr>
     `).join('');
   } else {
-    scoresHtml = '<tr><td colspan="3" style="text-align:center;color:#888;">暂无比分数据</td></tr>';
+    finishedHtml = '<tr><td colspan="5" style="padding:16px;text-align:center;color:#888;">暂无比赛数据</td></tr>';
+  }
+  
+  // 今日赛程
+  let upcomingHtml = '';
+  if (data.upcoming && data.upcoming.length > 0) {
+    upcomingHtml = data.upcoming.slice(0, 15).map(m => `
+      <tr>
+        <td style="padding:8px;border-bottom:1px solid #eee;">${m.tournament}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;">${m.homeTeam}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;color:#007bff;">vs</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;">${m.awayTeam}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;">${m.format}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;"><span style="background:#007bff;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">即将开始</span></td>
+      </tr>
+    `).join('');
+  } else {
+    upcomingHtml = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">暂无赛程数据</td></tr>';
   }
   
   return `<!DOCTYPE html>
@@ -109,40 +165,52 @@ function generateEmailHTML(data) {
 <head>
 <meta charset="utf-8">
 <style>
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 680px; margin: 0 auto; padding: 24px; background: #fafafa; }
-.card { background: #fff; border-radius: 8px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
-h1 { color: #FF6B35; border-bottom: 2px solid #FF6B35; padding-bottom: 10px; margin-top: 0; }
-h2 { color: #333; margin-top: 28px; }
-h3 { color: #555; margin-top: 18px; font-size: 15px; }
-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
-th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; }
-th { background-color: #f4f4f4; color: #666; font-weight: 600; }
-.winner { font-weight: bold; color: #28a745; }
-.loser { color: #aaa; }
-.footer { margin-top: 28px; padding-top: 16px; border-top: 1px solid #eee; color: #aaa; font-size: 12px; }
-a { color: #FF6B35; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+.card { background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+h1 { color: #FF6B35; margin: 0 0 4px 0; font-size: 24px; }
+.subtitle { color: #888; margin: 0 0 20px 0; font-size: 14px; }
+h2 { color: #333; margin: 24px 0 12px 0; font-size: 18px; border-left: 4px solid #FF6B35; padding-left: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; background: #fff; }
+th { background: #f8f8f8; color: #666; font-weight: 600; text-align: left; padding: 10px 8px; }
+td { padding: 8px; }
+.winner { color: #28a745; font-weight: bold; }
+.footer { margin-top: 28px; padding-top: 16px; border-top: 1px solid #eee; color: #999; font-size: 12px; text-align: center; }
+a { color: #FF6B35; text-decoration: none; }
 </style>
 </head>
 <body>
 <div class="card">
 <h1>🔥 CS2 比赛日报</h1>
-<p style="color:#888;margin-top:-8px;">为您汇总 ${todayStr} 热门比赛结果与今日赛程</p>
+<p class="subtitle">${todayStr} · 数据来源 VSGG</p>
 
-<h2>📊 热门队伍</h2>
-<p>${hotTeamsHtml}</p>
-
-<h2>📋 最新比赛</h2>
+<h2>✅ 昨日（${yesterdayStr}）已完成比赛</h2>
 <table>
-  <tr><th>队伍A</th><th>比分</th><th>队伍B</th></tr>
-  ${scoresHtml}
+  <tr>
+    <th style="width:30%;">赛事</th>
+    <th style="width:20%;">胜者</th>
+    <th style="width:15%;text-align:center;">比分</th>
+    <th style="width:20%;">败者</th>
+    <th style="width:15%;">赛制</th>
+  </tr>
+  ${finishedHtml}
 </table>
 
-<h2>🔗 查看完整数据</h2>
-<p>更多精彩内容请访问：<a href="https://vsgg.com/zh/cs2" target="_blank">VSGG CS2</a></p>
+<h2>📅 今日（${todayStr}）赛程</h2>
+<table>
+  <tr>
+    <th style="width:28%;">赛事</th>
+    <th style="width:18%;">队伍A</th>
+    <th style="width:8%;text-align:center;"></th>
+    <th style="width:18%;">队伍B</th>
+    <th style="width:12%;">赛制</th>
+    <th style="width:16%;">状态</th>
+  </tr>
+  ${upcomingHtml}
+</table>
 
 <div class="footer">
-  <p>📍 数据来源：VSGG (vsgg.com/zh/cs2)</p>
-  <p>⏰ 推送时间：${todayStr} 08:00 自动生成</p>
+  <p>📍 数据来源：<a href="https://vsgg.com/zh/cs2" target="_blank">VSGG CS2</a></p>
+  <p>⏰ 自动生成于 ${todayStr} 08:00</p>
 </div>
 </div>
 </body>
@@ -162,14 +230,6 @@ async function main() {
     const emailHTML = generateEmailHTML(data);
     fs.writeFileSync('email_content.html', emailHTML);
     console.log('邮件内容已保存到 email_content.html');
-    
-    // 调用 Python 发送邮件
-    console.log('调用 Python 发送邮件...');
-    try {
-      execSync('python send_email.py', { stdio: 'inherit' });
-    } catch (e) {
-      console.log('Python 邮件发送完成');
-    }
     
     console.log('='.repeat(50));
     console.log('执行完成!');
