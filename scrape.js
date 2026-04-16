@@ -17,6 +17,13 @@ function isTier1Tournament(name) {
   return TIER1_KEYWORDS.some(k => name.includes(k));
 }
 
+// ==================== 辅助函数 ====================
+function getDayOfWeek(dateStr) {
+  const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const d = new Date(dateStr);
+  return days[d.getDay()];
+}
+
 // 热门战队列表
 const HOT_TEAMS = [
   'FaZe', 'Natus Vincere', 'NaVi', 'Vitality', 'G2', 'Heroic',
@@ -270,44 +277,86 @@ function generateEmailHTML(data) {
   const yesterday = new Date(today - 86400000);
   const yesterdayStr = yesterday.toISOString().split('T')[0];
 
-  // 按日期过滤
-  const yesterdayFinished = (data.finished || []).filter(m => m.date === yesterdayStr);
-  const todayUpcoming = (data.upcoming || []).filter(m => m.date === todayStr);
+  // 按日期分组
+  const finishedByDate = {};
+  (data.finished || []).forEach(m => {
+    const dateKey = m.date;
+    if (!finishedByDate[dateKey]) finishedByDate[dateKey] = [];
+    finishedByDate[dateKey].push(m);
+  });
 
+  const upcomingByDate = {};
+  (data.upcoming || []).forEach(m => {
+    const dateKey = m.date;
+    if (!upcomingByDate[dateKey]) upcomingByDate[dateKey] = [];
+    upcomingByDate[dateKey].push(m);
+  });
+
+  // 排序日期
+  const sortedFinishedDates = Object.keys(finishedByDate).sort();
+  const sortedUpcomingDates = Object.keys(upcomingByDate).sort();
+
+  // 生成已完成的 HTML
   let finishedHtml = '';
-  if (yesterdayFinished.length > 0) {
-    finishedHtml = yesterdayFinished.map(m => `
+  if (sortedFinishedDates.length > 0) {
+    sortedFinishedDates.forEach(date => {
+      const matches = finishedByDate[date];
+      const dateLabel = date === yesterdayStr ? `${date} (昨日)` : `${date} (${getDayOfWeek(date)})`;
+      finishedHtml += `
+        <tr style="background:#f0f0f0;">
+          <td colspan="6" style="padding:8px 12px;font-weight:bold;color:#FF6B35;">${dateLabel}</td>
+        </tr>
+      `;
+      matches.forEach(m => {
+        const winner = m.homeScore > m.awayScore ? m.homeTeam : m.awayTeam;
+        const loser = m.homeScore > m.awayScore ? m.awayTeam : m.homeTeam;
+        const loserStyle = loser === m.homeTeam ? 'color:#666;' : 'color:#28a745;';
+        finishedHtml += `
       <tr>
         <td style="padding:8px;border-bottom:1px solid #eee;">${m.tournament || '-'}</td>
-        <td style="padding:8px;border-bottom:1px solid #eee;color:#28a745;font-weight:bold;">${m.homeTeam}</td>
-        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;">${m.homeScore || 0} - ${m.awayScore || 0}</td>
-        <td style="padding:8px;border-bottom:1px solid #eee;color:#666;">${m.awayTeam}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;color:#28a745;font-weight:bold;">${winner}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;">${m.homeScore} - ${m.awayScore}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;${loserStyle}">${loser}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">${m.format}</td>
-        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;color:#888;">${m.date ? m.date.slice(5) : ''} ${m.time || '-'}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;color:#888;">${m.time || '-'}</td>
       </tr>
-    `).join('');
+    `;
+      });
+    });
   } else {
-    finishedHtml = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">暂无热门战队比赛数据</td></tr>';
+    finishedHtml = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">暂无已完成比赛</td></tr>';
   }
 
+  // 生成赛程的 HTML
   let upcomingHtml = '';
-  if (todayUpcoming.length > 0) {
-    upcomingHtml = todayUpcoming.map(m => `
+  if (sortedUpcomingDates.length > 0) {
+    sortedUpcomingDates.forEach(date => {
+      const matches = upcomingByDate[date];
+      const dateLabel = date === todayStr ? `${date} (今日)` : `${date} (${getDayOfWeek(date)})`;
+      upcomingHtml += `
+        <tr style="background:#f0f0f0;">
+          <td colspan="6" style="padding:8px 12px;font-weight:bold;color:#007bff;">${dateLabel}</td>
+        </tr>
+      `;
+      matches.forEach(m => {
+        upcomingHtml += `
       <tr>
         <td style="padding:8px;border-bottom:1px solid #eee;">${m.tournament || '-'}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;">${m.homeTeam}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;color:#007bff;">vs</td>
         <td style="padding:8px;border-bottom:1px solid #eee;">${m.awayTeam}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">${m.format}</td>
-        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;"><span style="background:#007bff;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">${m.date ? m.date.slice(5) : ''} ${m.time || '即将开始'}</span></td>
+        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center;"><span style="background:#007bff;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">${m.time || '即将开始'}</span></td>
       </tr>
-    `).join('');
+    `;
+      });
+    });
   } else {
-    upcomingHtml = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">暂无热门战队赛程</td></tr>';
+    upcomingHtml = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">暂无赛程</td></tr>';
   }
 
-  const yesterdayCount = yesterdayFinished.length;
-  const todayCount = todayUpcoming.length;
+  const totalFinished = sortedFinishedDates.reduce((sum, d) => sum + finishedByDate[d].length, 0);
+  const totalUpcoming = sortedUpcomingDates.reduce((sum, d) => sum + upcomingByDate[d].length, 0);
 
   return `<!DOCTYPE html>
 <html>
@@ -330,9 +379,9 @@ a { color: #FF6B35; text-decoration: none; }
 <body>
 <div class="card">
 <h1>🔥 CS2 比赛日报（热门战队）</h1>
-<p class="subtitle">${todayStr}</p>
+<p class="subtitle">${todayStr} | 昨日 ${totalFinished} 场 | 赛程 ${totalUpcoming} 场</p>
 
-<h2>✅ 昨日（${yesterdayStr}）已完成比赛</h2>
+<h2>✅ 已完成比赛</h2>
 <table>
   <tr>
     <th style="width:25%;">赛事</th>
@@ -345,7 +394,7 @@ a { color: #FF6B35; text-decoration: none; }
   ${finishedHtml}
 </table>
 
-<h2>📅 今日（${todayStr}）赛程</h2>
+<h2>📅 赛程</h2>
 <table>
   <tr>
     <th style="width:25%;">赛事</th>
