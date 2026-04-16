@@ -22,7 +22,7 @@ async function scrapeVSGG(browser) {
   });
   
   try {
-    await page.goto(DATA_SOURCES.vsgg, { waitUntil: 'networkidle2', timeout: 60000 });
+    await page.goto(DATA_SOURCES.vsgg, { waitUntil: 'networkidle', timeout: 60000 });
     await page.waitForTimeout(3000);
     
     // 尝试等待比赛列表
@@ -92,7 +92,7 @@ async function scrapeGosuGamers(browser) {
   });
   
   try {
-    await page.goto(DATA_SOURCES.gosugamers, { waitUntil: 'networkidle2', timeout: 60000 });
+    await page.goto(DATA_SOURCES.gosugamers, { waitUntil: 'networkidle', timeout: 60000 });
     await page.waitForTimeout(3000);
     
     const matches = await page.evaluate(() => {
