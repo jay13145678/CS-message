@@ -217,12 +217,19 @@ function parse5eplayLines(text) {
     });
   }
 
-  // 去重
-  const seen = new Set();
+  // 去重：同一赛事+同一时间+同一队伍只保留第一场
+  const seenKeys = new Set();
   return matches.filter(m => {
-    const key = `${m.homeTeam}|${m.awayTeam}|${m.homeScore || '?'}|${m.time}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
+    const tournament = m.tournament || '';
+    const time = m.time || '';
+    const allTeams = [m.homeTeam.toUpperCase(), m.awayTeam.toUpperCase()].sort().join('|');
+    // 检查任一队伍是否已在此赛事+时间出现过
+    const teams = [m.homeTeam.toUpperCase(), m.awayTeam.toUpperCase()];
+    for (const team of teams) {
+      const key = `${tournament}|${time}|${team}`;
+      if (seenKeys.has(key)) return false;
+      seenKeys.add(key);
+    }
     return true;
   });
 }
