@@ -1,12 +1,12 @@
 # 长期记忆
 
 ## CS2比分获取
-- 固定数据源：5eplay (https://event.5eplay.com/csgo/matches) 提供CS2赛事数据
-  - tab=result: 已完成比赛
-  - tab=schedule: 即将开始的比赛
-- 旧数据源VSGG已弃用（解析问题）
-- 备用数据源：GGscore、CS比分网
-- IEM Rio 2026赛程：04/13-04/21，赛事进行中
+- 固定数据源：5eplay (https://event.5eplay.com/csgo/events) 提供CS2赛事数据
+  - 策略：从赛事详情页 (?channel=matches) 获取完整赛程
+  - 支持：已完成比赛（有比分）+ 即将开始比赛
+- 爬虫解析：日期 → 时间 → 赛制 → 队伍1 → 队伍2 → 胜率 → 总比分 → 地图比分
+- 过滤：一线赛事（IEM/BLAST/CCT等）+ 热门战队
+- IEM 里约 2026：04/13-04/20，赛事进行中
 - 任务：每天08:00自动获取CS热门比赛比分（今日+昨日）
 
 ## 用户偏好

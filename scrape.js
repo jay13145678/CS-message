@@ -270,9 +270,13 @@ function generateEmailHTML(data) {
   const yesterday = new Date(today - 86400000);
   const yesterdayStr = yesterday.toISOString().split('T')[0];
 
+  // 按日期过滤
+  const yesterdayFinished = (data.finished || []).filter(m => m.date === yesterdayStr);
+  const todayUpcoming = (data.upcoming || []).filter(m => m.date === todayStr);
+
   let finishedHtml = '';
-  if (data.finished && data.finished.length > 0) {
-    finishedHtml = data.finished.map(m => `
+  if (yesterdayFinished.length > 0) {
+    finishedHtml = yesterdayFinished.map(m => `
       <tr>
         <td style="padding:8px;border-bottom:1px solid #eee;">${m.tournament || '-'}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;color:#28a745;font-weight:bold;">${m.homeTeam}</td>
@@ -287,8 +291,8 @@ function generateEmailHTML(data) {
   }
 
   let upcomingHtml = '';
-  if (data.upcoming && data.upcoming.length > 0) {
-    upcomingHtml = data.upcoming.map(m => `
+  if (todayUpcoming.length > 0) {
+    upcomingHtml = todayUpcoming.map(m => `
       <tr>
         <td style="padding:8px;border-bottom:1px solid #eee;">${m.tournament || '-'}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;">${m.homeTeam}</td>
@@ -301,6 +305,9 @@ function generateEmailHTML(data) {
   } else {
     upcomingHtml = '<tr><td colspan="6" style="padding:16px;text-align:center;color:#888;">暂无热门战队赛程</td></tr>';
   }
+
+  const yesterdayCount = yesterdayFinished.length;
+  const todayCount = todayUpcoming.length;
 
   return `<!DOCTYPE html>
 <html>
