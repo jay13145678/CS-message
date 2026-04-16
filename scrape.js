@@ -252,9 +252,9 @@ async function scrape5eplay() {
       (m.date === yesterday || m.date === todayStr)
     );
 
-    // 赛程只保留今天的
+    // 赛程只保留昨天和今天的
     const upcoming = filteredMatches.filter(m =>
-      m.homeScore === null && m.date === todayStr
+      m.homeScore === null && (m.date === yesterday || m.date === todayStr)
     );
 
     console.log(`\n[5eplay] 已完成比赛: ${finished.length} 场`);
