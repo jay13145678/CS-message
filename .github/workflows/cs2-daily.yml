@@ -22,18 +22,19 @@ jobs:
         with:
           python-version: '3.11'
 
-      # 3. 安装依赖
-      - name: 安装依赖
+      # 3. 安装 Playwright 和浏览器
+      - name: 安装 Playwright
         run: |
-          python -m pip install --upgrade pip
+          pip install playwright
+          playwright install chromium --with-deps
 
-      # 4. 运行脚本
+      # 4. 运行脚本获取数据并发送邮件
       - name: 获取 CS2 比赛数据并发送邮件
         env:
           SMTP_AUTH_CODE: ${{ secrets.SMTP_AUTH_CODE }}
-        run: python cs2_daily.py
+        run: python cs2_daily_playwright.py
 
-      # 5. 可选：添加执行记录
+      # 5. 记录执行日志
       - name: 记录执行日志
         run: |
           echo "CS2 比赛日报已于 $(date) 执行完成" >> execution_log.txt
