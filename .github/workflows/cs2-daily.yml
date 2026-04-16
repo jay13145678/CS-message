@@ -16,34 +16,26 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      # 2. 设置 Node.js (Playwright 需要)
+      # 2. 设置 Node.js
       - name: 设置 Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      # 3. 安装 Playwright
-      - name: 安装 Playwright 和依赖
+      # 3. 安装 Playwright 和运行脚本
+      - name: 安装依赖并获取数据
         run: |
-          npm install playwright
-          npx playwright install chromium --with-deps
+          npm install
+          node scrape.js
 
-      # 4. 安装 Python 和邮件依赖
+      # 4. 设置 Python
       - name: 设置 Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
-      - name: 安装 Python 依赖
-        run: pip install beautifulsoup4
 
-      # 5. 运行 Playwright 脚本
-      - name: 获取 CS2 比赛数据并发送邮件
+      # 5. 运行 Python 发送邮件
+      - name: 发送邮件
         env:
           SMTP_AUTH_CODE: ${{ secrets.SMTP_AUTH_CODE }}
-        run: node scrape.js
-
-      # 6. 记录执行日志
-      - name: 记录执行日志
-        run: |
-          echo "CS2 比赛日报已于 $(date) 执行完成" >> execution_log.txt
+        run: python send_email.py
