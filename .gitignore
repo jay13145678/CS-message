@@ -1,0 +1,10 @@
+# Node.js
+node_modules/
+
+# 临时数据文件
+cs2_data.json
+email_content.html
+
+# Python
+__pycache__/
+*.pyc
