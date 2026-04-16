@@ -1,0 +1,12 @@
+{
+  "name": "cs2-daily-report",
+  "version": "1.0.0",
+  "description": "CS2 比赛日报自动化",
+  "main": "scrape.js",
+  "scripts": {
+    "start": "node scrape.js"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}
