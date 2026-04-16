@@ -8,19 +8,22 @@ const fs = require('fs');
 
 const DATA_SOURCE = 'https://vsgg.com/zh/cs2';
 
-// 热门战队列表
+// 热门战队列表（覆盖 VSGG 上所有队伍）
 const HOT_TEAMS = [
   // 一线战队
   'FaZe', 'Natus Vincere', 'NaVi', 'Vitality', 'G2', 'Heroic', 
   'MOUZ', 'Spirit', 'Liquid', 'ENCE', 'NIP', 'Astralis',
   'Cloud9', 'BIG', 'fnatic', 'Complexity', 'Imperial', 'FURIA',
   'Virtus.pro', 'VP', 'VP.Prodigy', '9z', 'Fluxo', 'MIBR',
-  'Aurora', 'Team Liquid', 'Apeks', ' Eternal Fire', 'SINNERS',
+  'Aurora', 'Team Liquid', 'Apeks', 'Eternal Fire', 'SINNERS',
   // 中国战队
   'TYLOO', 'RAZER', 'Eclipse', 'IG', 'NewHappy',
   // 二三线但常见的
   'B8', '1win', 'Sashi', 'Alliance', 'TNC', 'Execration',
-  'Nuclear', 'Fire Flux', 'Metizport', 'ARCRED', 'Young Ninjas'
+  'Nuclear', 'Fire Flux', 'Metizport', 'ARCRED', 'Young Ninjas',
+  // VSGG 上其他队伍
+  'Lavked', 'Bebop', 'ESC', 'Ursa', 'regain', 'EMPIRE',
+  'Falcons', 'KOLESIE', 'TDK', 'MANA', 'PARIVISION', 'The MongolZ'
 ];
 
 // 赛制正则
