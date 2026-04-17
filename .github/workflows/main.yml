@@ -2,7 +2,7 @@ name: CS2 比赛日报
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '48 7 * * *'
   workflow_dispatch:
 
 jobs:
