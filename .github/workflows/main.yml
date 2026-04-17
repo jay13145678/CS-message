@@ -1,0 +1,40 @@
+name: CS2 比赛日报
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  send-daily-report:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安装 Playwright
+        run: |
+          npm install playwright
+          npx playwright install chromium --with-deps
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装 Python 依赖
+        run: pip install beautifulsoup4
+
+      - name: 获取 CS2 比赛数据
+        run: node scrape.js
+
+      - name: 发送邮件
+        env:
+          SMTP_AUTH_CODE: ${{ secrets.SMTP_AUTH_CODE }}
+        run: python send_email.py
