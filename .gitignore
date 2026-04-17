@@ -8,3 +8,7 @@ email_content.html
 # Python
 __pycache__/
 *.pyc
+
+# 本地工具文件
+.codebuddy/
+.workbuddy/
